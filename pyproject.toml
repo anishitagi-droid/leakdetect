@@ -1,0 +1,9 @@
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "E", "B", "SIM", "C4", "PIE", "RET", "ARG", "UP", "RUF", "PERF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
