@@ -200,3 +200,29 @@ def test_unusable_inputs_raise_a_clear_error(make, message):
 def test_class_with_three_rows_uses_fewer_folds_instead_of_failing():
     df = _frame().assign(y=lambda d: (np.arange(len(d)) < 3).astype(int))
     assert run_layer4(df, "y", 1).status == "ok"
+
+
+# ---- impact estimate
+def _leaky_frame(n=600, seed=0):
+    rng = np.random.default_rng(seed)
+    x0 = rng.normal(size=n)
+    y = (rng.random(n) < 1 / (1 + np.exp(-0.8 * x0))).astype(int)  # x0 carries moderate signal (AUC ~0.7)
+    return pd.DataFrame({"y": y, "x0": x0, "leak": y + rng.normal(scale=0.05, size=n)})
+
+
+def test_impact_reports_how_far_auc_falls_without_the_flagged_feature():
+    res = run_layer4(_leaky_frame(), "y", 1)
+    impact = res.extras["impact"]
+    assert impact["features"] == ["leak"]
+    assert impact["with"] > 0.95 and 0.6 < impact["without"] < 0.8  # honest model keeps only x0's signal
+    assert any("Removing ['leak']" in n for n in res.notes)
+
+
+def test_no_impact_estimate_when_nothing_is_flagged_at_severity_4():
+    res = run_layer4(_frame(), "y", 1)
+    assert "impact" not in res.extras and not any("Removing" in n for n in res.notes)
+
+
+def test_no_impact_estimate_when_every_feature_is_flagged():
+    df = _leaky_frame()[["y", "leak"]]
+    assert "impact" not in run_layer4(df, "y", 1).extras  # nothing would be left to fit

@@ -114,6 +114,25 @@ def _tree_cv_auc(A, y, folds, seed):
     return out / len(folds)
 
 
+def _forest_auc(X, y, folds, seed):
+    return cross_val_score(
+        RandomForestClassifier(200, random_state=seed, n_jobs=-1), X, y, cv=folds, scoring="roc_auc"
+    ).mean()
+
+
+def drop_impact(X, y, findings, full_auc, seed=0, min_severity=4):
+    """Re-fit without the features flagged at `min_severity`+ and report how far the cross-validated AUC falls.
+    Returns {"features", "with", "without"} or None when nothing qualifies / nothing would be left to fit."""
+    flagged = sorted({f.feature_or_step for f in findings if f.severity >= min_severity} & set(X.columns))
+    if not flagged or len(flagged) == X.shape[1]:
+        return None
+    return {
+        "features": flagged,
+        "with": full_auc,
+        "without": _forest_auc(X.drop(columns=flagged), y, _folds(y, seed), seed),
+    }
+
+
 def single_feature_power(X, y, auc_threshold=0.95, seed=0):
     A, folds = X.to_numpy(), _folds(y, seed)
     table = pd.DataFrame(
@@ -125,9 +144,7 @@ def single_feature_power(X, y, auc_threshold=0.95, seed=0):
     )
     table["auc"] = table[["auc_monotone", "auc_tree"]].max(axis=1)
     table = table.sort_values("auc", ascending=False).reset_index(drop=True)
-    full = cross_val_score(
-        RandomForestClassifier(200, random_state=seed, n_jobs=-1), X, y, cv=folds, scoring="roc_auc"
-    ).mean()
+    full = _forest_auc(X, y, folds, seed)
     findings = [
         Finding(
             LAYER,
@@ -319,6 +336,7 @@ def run_layer4(
     Xtr, Xte = train_test_split(X, test_size=test_size, random_state=seed, stratify=y)
     f4, ks_info = split_similarity_check(Xtr, Xte, seed=seed)
     res.findings += f1 + f2 + perfect_separation(X, y) + f4
+    res.extras = {"single_feature": tbl, "mutual_information": mi_tbl, "ks": ks_info, "full_model_auc": full}
     if feature_metadata is None:
         res.notes.append(
             "post-period feature check SKIPPED: no feature_metadata supplied "
@@ -329,5 +347,12 @@ def run_layer4(
     res.notes.append(
         "Single-feature AUC / MI / stump findings are target-proxy EVIDENCE for human review, not proof of leakage."
     )
-    res.extras = {"single_feature": tbl, "mutual_information": mi_tbl, "ks": ks_info, "full_model_auc": full}
+    impact = drop_impact(X, y, res.findings, full, seed)
+    if impact:
+        res.extras["impact"] = impact
+        res.notes.append(
+            f"Removing {impact['features']} changes 5-fold random-forest AUC from {impact['with']:.3f} to "
+            f"{impact['without']:.3f} ({impact['without'] - impact['with']:+.3f}). A large drop means the model "
+            f"leaned on those columns; it does not by itself prove they leak."
+        )
     return res
