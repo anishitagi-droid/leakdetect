@@ -39,3 +39,17 @@ def test_cli_rejects_a_bad_positive_label_and_unknown_columns(tmp_path):
         main([path, "--target", "y", "--positive", "maybe"])
     with pytest.raises(SystemExit, match="not in"):
         main([path, "--target", "nope", "--positive", "1"])
+
+
+@pytest.mark.parametrize(("cast", "positive"), [(float, "1"), (bool, "true"), (bool, "True")])
+def test_cli_matches_positive_label_across_numeric_and_boolean_targets(tmp_path, capsys, cast, positive):
+    from leakdetect.__main__ import main
+
+    rng = np.random.default_rng(0)
+    y = rng.integers(0, 2, 300)
+    path = tmp_path / "t.csv"
+    pd.DataFrame({"y": y.astype(cast), "x": rng.normal(size=300), "leak": y + rng.normal(scale=0.01, size=300)}).to_csv(
+        path, index=False
+    )
+    assert main([str(path), "--target", "y", "--positive", positive]) == 1
+    assert "leak" in capsys.readouterr().out

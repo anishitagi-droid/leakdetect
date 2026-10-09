@@ -31,10 +31,13 @@ from .schema import Finding, LayerResult
 
 LAYER = 4
 MAX_LEVELS = 50  # categorical columns with more levels are dropped (IDs, free text, names)
+MIN_ROWS = 20  # below this, cross-validation and nearest-neighbour MI estimates are meaningless
 
 
 def prepare_xy(df: pd.DataFrame, target: str, positive, drop_cols=(), max_levels=MAX_LEVELS):
     """Returns (X, y, notes): a NaN-free float matrix, a 0/1 target, and a note for every transformation applied."""
+    if df.columns.duplicated().any():
+        raise ValueError(f"duplicate column names: {sorted(set(df.columns[df.columns.duplicated()]))}")
     if df[target].isna().any():
         raise ValueError(f"target '{target}' contains missing values; drop or fill those rows first")
     if positive not in set(df[target]):
@@ -42,9 +45,15 @@ def prepare_xy(df: pd.DataFrame, target: str, positive, drop_cols=(), max_levels
     y = (df[target] == positive).astype(int).to_numpy()
     if y.min() == y.max():
         raise ValueError("target has a single class; nothing to predict")
+    if np.bincount(y).min() < 2:
+        raise ValueError("the smaller class has fewer than 2 rows; it cannot be cross-validated")
     X, notes = df.drop(columns=[target, *drop_cols], errors="ignore"), []
 
     num = X.select_dtypes(include=["number", "bool"])
+    n_inf = int(np.isinf(num.astype(float)).sum().sum())
+    if n_inf:
+        num = num.astype(float).replace([np.inf, -np.inf], np.nan)
+        notes.append(f"treated {n_inf} infinite value(s) as missing")
     when = [c for c in X.columns if is_datetime64_any_dtype(X[c]) or is_timedelta64_dtype(X[c])]
     cat = X.drop(columns=[*num.columns, *when]).astype("object")
     wide = [c for c in cat if cat[c].nunique() > max_levels]
@@ -67,11 +76,15 @@ def prepare_xy(df: pd.DataFrame, target: str, positive, drop_cols=(), max_levels
         num[missing].isna().astype(float).add_suffix("__missing"),
         pd.get_dummies(cat, drop_first=True, dtype=float) if cat.shape[1] else cat,
     ]
-    return pd.concat(parts, axis=1).reset_index(drop=True), y, notes
+    features = pd.concat(parts, axis=1).reset_index(drop=True)
+    if features.shape[1] == 0:
+        raise ValueError("no usable feature columns left" + (f": {'; '.join(notes)}" if notes else ""))
+    return features, y, notes
 
 
 def _folds(y, seed):
-    return list(StratifiedKFold(5, shuffle=True, random_state=seed).split(np.zeros(len(y)), y))
+    n_splits = min(5, int(np.bincount(y).min()))  # a class with 3 rows cannot be split 5 ways
+    return list(StratifiedKFold(n_splits, shuffle=True, random_state=seed).split(np.zeros(len(y)), y))
 
 
 def _rank_auc(M, y):
@@ -297,6 +310,8 @@ def post_period_features(feature_metadata):
 def run_layer4(
     df, target, positive, drop_cols=(), feature_metadata=None, test_size=0.25, seed=0, auc_threshold=0.95, mi_ratio=0.5
 ):
+    if len(df) < MIN_ROWS:
+        raise ValueError(f"{len(df)} rows is too few for these statistics (minimum {MIN_ROWS})")
     X, y, notes = prepare_xy(df, target, positive, drop_cols)
     res = LayerResult(LAYER, "ok", notes=notes)
     f1, tbl, full = single_feature_power(X, y, auc_threshold, seed)

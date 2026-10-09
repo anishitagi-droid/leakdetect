@@ -167,3 +167,36 @@ def test_partial_tail_rule_is_severity_3_but_complete_rule_is_severity_4():
     full = np.where(y == 1, rng.random(n) + 1, 0.0)  # zero iff negative: separates both classes completely
     found = {f.feature_or_step: f.severity for f in perfect_separation(pd.DataFrame({"tail": tail, "full": full}), y)}
     assert found == {"tail": 3, "full": 4}
+
+
+# ---- messy-input regressions found by fuzzing the entry points (each used to crash with an opaque sklearn error)
+def _frame(n=300, seed=0):
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame({"y": rng.integers(0, 2, n), "a": rng.normal(size=n), "b": rng.normal(size=n)})
+
+
+def test_infinite_values_are_treated_as_missing_and_reported():
+    df = _frame()
+    df.loc[3, "a"], df.loc[4, "b"] = np.inf, -np.inf
+    res = run_layer4(df, "y", 1)
+    assert any("2 infinite value(s)" in n for n in res.notes)
+
+
+@pytest.mark.parametrize(
+    ("make", "message"),
+    [
+        (lambda: pd.concat([_frame(), _frame()[["a"]]], axis=1), "duplicate column names"),
+        (lambda: _frame(10), "too few"),
+        (lambda: _frame().assign(y=lambda d: (np.arange(len(d)) == 0).astype(int)), "fewer than 2 rows"),
+        (lambda: _frame()[["y"]], "no usable feature columns"),
+    ],
+    ids=["duplicate-columns", "ten-rows", "one-row-class", "no-features"],
+)
+def test_unusable_inputs_raise_a_clear_error(make, message):
+    with pytest.raises(ValueError, match=message):
+        run_layer4(make(), "y", 1)
+
+
+def test_class_with_three_rows_uses_fewer_folds_instead_of_failing():
+    df = _frame().assign(y=lambda d: (np.arange(len(d)) < 3).astype(int))
+    assert run_layer4(df, "y", 1).status == "ok"

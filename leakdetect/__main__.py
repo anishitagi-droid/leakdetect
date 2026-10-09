@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+import numpy as np
 import pandas as pd
 
 from .aggregator import aggregate, to_json, to_markdown
@@ -21,10 +22,22 @@ from .layer1_static import analyze_file
 from .layer4_stats import run_layer4
 
 
+def _same(value, raw):
+    """Does the target value correspond to the command-line text? Numbers compare numerically (so `1` matches 1.0),
+    booleans case-insensitively, everything else as text."""
+    if isinstance(value, (bool, np.bool_)):
+        return str(value).lower() == raw.lower()
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        try:
+            return float(raw) == float(value)
+        except ValueError:
+            return False
+    return str(value) == raw
+
+
 def _resolve_positive(df, target, raw):
-    """CSV columns may hold ints while the command line gives strings: match on the string form."""
     values = df[target].dropna().unique()
-    match = next((v for v in values if str(v) == raw), None)
+    match = next((v for v in values if _same(v, raw)), None)
     if match is None:
         sys.exit(f"error: --positive {raw!r} is not a value of '{target}' (values: {sorted(map(str, values))[:10]})")
     return match
