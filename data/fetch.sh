@@ -9,5 +9,8 @@ fetch CreditCard.csv      https://raw.githubusercontent.com/vincentarelbundock/R
 fetch titanic_seaborn.csv https://raw.githubusercontent.com/mwaskom/seaborn-data/master/titanic.csv
 fetch pd_speech.csv       https://raw.githubusercontent.com/vincentarelbundock/Rdatasets/master/csv/modeldata/pd_speech.csv
 fetch stocks.csv          https://raw.githubusercontent.com/vega/vega-datasets/main/data/stocks.csv
+fetch Orthodont.csv       https://raw.githubusercontent.com/vincentarelbundock/Rdatasets/master/csv/nlme/Orthodont.csv
+fetch ChickWeight.csv     https://raw.githubusercontent.com/vincentarelbundock/Rdatasets/master/csv/datasets/ChickWeight.csv
+fetch VerbAgg.csv         https://raw.githubusercontent.com/vincentarelbundock/Rdatasets/master/csv/lme4/VerbAgg.csv
 
 if command -v sha256sum >/dev/null; then sha256sum -c SHA256SUMS; else shasum -a 256 -c SHA256SUMS; fi

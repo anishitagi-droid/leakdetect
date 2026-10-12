@@ -2,6 +2,8 @@
 
 Titanic (seaborn copy)  Layer 4 on a raw CSV with NaNs/strings; `alive` is a literal copy of the target.
 Parkinson's speech      Layer 1 + a measurement of what selection-before-split really costs when p >> n.
+Repeated measures       Entity leakage: random vs entity-grouped folds (synthetic positive control, 3 real
+datasets, shuffled-id false-positive control).
 Stocks (real prices)    Layer 3 on real timestamps; the leak is a look-ahead (forward) as-of join BUG that I inject.
 """
 
@@ -25,7 +27,7 @@ from run_aer import rf_auc
 from leakdetect.aggregator import aggregate, to_markdown
 from leakdetect.layer1_static import analyze_file
 from leakdetect.layer3_pit import run_layer3
-from leakdetect.layer4_stats import prepare_xy, run_layer4
+from leakdetect.layer4_stats import group_leakage, prepare_xy, run_layer4
 
 warnings.filterwarnings("ignore")
 
@@ -140,10 +142,47 @@ def stocks():
     return r_ok, r_bad
 
 
+def entity_leakage():
+    print("\n== Entity leakage: AUC under random vs entity-grouped folds (5 repeats) ==")
+
+    def show(name, X, y, groups, repeats=5):
+        found, info = group_leakage(X, y, groups, repeats=repeats)
+        verdict = f"FLAGGED (sev {found[0].severity})" if found else "not flagged"
+        print(
+            f"  {name:50} overlap {info['same_group_share']:4.0%}  random {info['random_auc']:.3f}  "
+            f"grouped {info['grouped_auc']:.3f}  gap {info['gap']:+.3f}  {verdict}"
+        )
+        return bool(found)
+
+    rng = np.random.default_rng(0)
+    subject = np.repeat(np.arange(60), 6)
+    label = rng.permutation(np.arange(60) % 2)[subject]  # constant within a subject, unrelated to anything
+    signature = pd.DataFrame(rng.normal(size=(60, 5))[subject] + rng.normal(scale=0.3, size=(360, 5)))
+    show("SYNTHETIC positive control (memorisable subjects)", signature, label, subject)
+    chick = None
+    for name, path, target, positive, group, drop in (
+        ("Orthodont: Sex ~ distance, age", "data/Orthodont.csv", "Sex", "Male", "Subject", ("rownames",)),
+        ("ChickWeight: Diet==1 ~ weight, time", "data/ChickWeight.csv", "Diet", 1, "Chick", ("rownames",)),
+        ("VerbAgg: response ~ person + item covariates", "data/VerbAgg.csv", "r2", "Y", "id", ("rownames", "resp")),
+    ):
+        df = pd.read_csv(path)
+        X, y, _ = prepare_xy(df, target, positive, drop_cols=(*drop, group))
+        show(name, X, y, df[group].to_numpy())
+        if group == "Chick":
+            chick = (X, y, df[group].to_numpy())
+    X, y, ids = chick
+    flagged = sum(
+        show(f"ChickWeight, shuffled ids (control {i + 1}/10)", X, y, rng.permutation(ids), repeats=3)
+        for i in range(10)
+    )
+    print(f"  shuffled-id controls flagged: {flagged}/10 (expect 0)")
+
+
 if __name__ == "__main__":
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "report/examples")
     out.mkdir(parents=True, exist_ok=True)
     t = titanic()
     p4, p1 = parkinsons()
+    entity_leakage()
     _, bad = stocks()
     (out / "examples.md").write_text(to_markdown(aggregate([t, p4, p1, bad])))

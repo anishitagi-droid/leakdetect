@@ -6,6 +6,7 @@ Works on any static tabular dataset. Sub-checks:
   3. perfect-separation rule: depth-1 stump with a large, 100%-pure side that chance cannot explain
   4. train/test similarity: permutation test on the mean KS statistic
   5. post-period feature check (needs caller-supplied metadata; otherwise skipped)
+  6. entity leakage (needs a group column): AUC under random vs entity-grouped folds
 
 Honest limitations (also surfaced in `notes`):
   * Findings are target-proxy EVIDENCE for human review, not proof of leakage: some strong predictors are legitimate.
@@ -24,7 +25,7 @@ from scipy.stats import rankdata
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import mutual_info_classif
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, cross_val_score, train_test_split
 from sklearn.tree import DecisionTreeClassifier
 
 from .schema import Finding, LayerResult
@@ -308,6 +309,68 @@ def split_similarity_check(X_train, X_test, n_perm=300, seed=0, alpha=0.01):
     return out, info
 
 
+def _material_gap(gap, se, min_gap):
+    """A random-vs-grouped AUC gap is material only if it is practically large AND statistically clear."""
+    return gap >= min_gap and gap > 3 * se
+
+
+def group_leakage(X, y, groups, name="groups", seed=0, repeats=5, min_gap=0.03):
+    """Does a random split overstate performance because rows of one entity land on both sides?
+    Compares 5-fold AUC under random vs entity-grouped folds (same model, same seeds, `repeats` times) and reports
+    the share of test rows that have a same-entity row in train under a random 75/25 split.
+    Flags only a material gap (>= min_gap and > 3 SE): overlap alone is common and often harmless, because it
+    only inflates metrics when the features can identify the entity AND the target is entity-specific."""
+    groups = np.asarray(groups)
+    n_groups = len(np.unique(groups))
+    if n_groups < 10:
+        raise ValueError(f"need at least 10 distinct groups to compare grouped and random folds, got {n_groups}")
+    if n_groups == len(groups):
+        return [], {"skipped": "every row is its own group; there is no entity structure to test"}
+    n_splits = min(5, n_groups, int(np.bincount(y).min()))
+    gaps, random_auc, grouped_auc = [], [], []
+    for s in range(repeats):
+        forest = RandomForestClassifier(100, random_state=s, n_jobs=-1)
+        r = cross_val_score(
+            forest, X, y, scoring="roc_auc", cv=StratifiedKFold(n_splits, shuffle=True, random_state=s)
+        ).mean()
+        g = cross_val_score(
+            forest,
+            X,
+            y,
+            scoring="roc_auc",
+            groups=groups,
+            cv=StratifiedGroupKFold(n_splits, shuffle=True, random_state=s),
+        ).mean()
+        random_auc.append(r), grouped_auc.append(g), gaps.append(r - g)
+    gap, se = float(np.mean(gaps)), float(np.std(gaps, ddof=1) / np.sqrt(repeats))
+    train, test = train_test_split(np.arange(len(y)), test_size=0.25, random_state=seed, stratify=y)
+    shared = float(np.isin(groups[test], groups[train]).mean())
+    info = {
+        "n_groups": n_groups,
+        "median_rows_per_group": float(np.median(np.unique(groups, return_counts=True)[1])),
+        "same_group_share": shared,
+        "random_auc": float(np.mean(random_auc)),
+        "grouped_auc": float(np.mean(grouped_auc)),
+        "gap": gap,
+        "se": se,
+    }
+    if not _material_gap(gap, se, min_gap):
+        return [], info
+    return [
+        Finding(
+            LAYER,
+            f"group:{name}",
+            "group-leakage",
+            4 if gap >= 0.10 else 3,
+            f"AUC is {info['random_auc']:.3f} under random folds but {info['grouped_auc']:.3f} "
+            f"when whole '{name}' groups "
+            f"are held out (gap {gap:+.3f}, SE {se:.3f}, {repeats} repeats); {shared:.0%} of test rows have a same-"
+            f"'{name}' row in train under a random split ({n_groups} groups).",
+            f"Split by '{name}' (GroupKFold / GroupShuffleSplit) so no entity appears on both sides.",
+        )
+    ], info
+
+
 def post_period_features(feature_metadata):
     """Metadata-driven: {feature: 'application' | 'post_application' | 'unknown'}."""
     return [
@@ -325,11 +388,25 @@ def post_period_features(feature_metadata):
 
 
 def run_layer4(
-    df, target, positive, drop_cols=(), feature_metadata=None, test_size=0.25, seed=0, auc_threshold=0.95, mi_ratio=0.5
+    df,
+    target,
+    positive,
+    drop_cols=(),
+    feature_metadata=None,
+    test_size=0.25,
+    seed=0,
+    auc_threshold=0.95,
+    mi_ratio=0.5,
+    groups=None,
 ):
     if len(df) < MIN_ROWS:
         raise ValueError(f"{len(df)} rows is too few for these statistics (minimum {MIN_ROWS})")
-    X, y, notes = prepare_xy(df, target, positive, drop_cols)
+    if groups is not None:
+        if groups not in df.columns:
+            raise ValueError(f"group column {groups!r} not in the data")
+        if df[groups].isna().any():
+            raise ValueError(f"group column {groups!r} contains missing values")
+    X, y, notes = prepare_xy(df, target, positive, (*drop_cols, *([groups] if groups is not None else [])))
     res = LayerResult(LAYER, "ok", notes=notes)
     f1, tbl, full = single_feature_power(X, y, auc_threshold, seed)
     f2, mi_tbl = high_mutual_information(X, y, mi_ratio, seed)
@@ -347,6 +424,18 @@ def run_layer4(
     res.notes.append(
         "Single-feature AUC / MI / stump findings are target-proxy EVIDENCE for human review, not proof of leakage."
     )
+    if groups is not None:
+        found, info = group_leakage(X, y, df[groups].to_numpy(), groups, seed)
+        res.findings += found
+        res.extras["group"] = info
+        if "skipped" in info:
+            res.notes.append(f"group check SKIPPED: {info['skipped']}.")
+        elif not found:
+            res.notes.append(
+                f"group check: {info['same_group_share']:.0%} of test rows share a '{groups}' with training rows "
+                f"under a random split, and AUC is {info['random_auc']:.3f} random vs {info['grouped_auc']:.3f} "
+                f"grouped (gap {info['gap']:+.3f}): no measurable inflation."
+            )
     impact = drop_impact(X, y, res.findings, full, seed)
     if impact:
         res.extras["impact"] = impact

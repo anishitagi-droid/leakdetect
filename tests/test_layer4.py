@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from leakdetect.layer4_stats import prepare_xy, run_layer4, split_similarity_check
+from leakdetect.layer4_stats import _material_gap, group_leakage, prepare_xy, run_layer4, split_similarity_check
 
 warnings.filterwarnings("ignore")
 
@@ -226,3 +226,82 @@ def test_no_impact_estimate_when_nothing_is_flagged_at_severity_4():
 def test_no_impact_estimate_when_every_feature_is_flagged():
     df = _leaky_frame()[["y", "leak"]]
     assert "impact" not in run_layer4(df, "y", 1).extras  # nothing would be left to fit
+
+
+# ---- entity (group) leakage
+def _repeated_measures(n_subjects=60, rows=6, identifiable=True, seed=0, noise=0.3):
+    """Subject-level random labels. If `identifiable`, every row carries its subject's fixed feature vector, so a
+    random split lets the model memorise subjects (a leak by construction); otherwise features are pure noise."""
+    rng = np.random.default_rng(seed)
+    subject = np.repeat(np.arange(n_subjects), rows)
+    label = rng.permutation(np.arange(n_subjects) % 2)[subject]  # constant within a subject, unrelated to anything
+    signature = rng.normal(size=(n_subjects, 5))[subject] if identifiable else rng.normal(size=(len(subject), 5))
+    X = signature + rng.normal(scale=noise, size=signature.shape)
+    return pd.DataFrame(X, columns=list("abcde")).assign(y=label, subject=subject)
+
+
+def _xy(df):
+    return df[list("abcde")], df["y"].to_numpy()
+
+
+def test_group_leakage_flags_memorisable_entities_with_a_large_gap():
+    df = _repeated_measures()
+    found, info = group_leakage(*_xy(df), df["subject"], "subject", repeats=3)
+    assert len(found) == 1 and found[0].leakage_type == "group-leakage" and found[0].severity == 4
+    assert info["random_auc"] > 0.85 and info["grouped_auc"] < 0.65 and info["same_group_share"] > 0.9
+
+
+def test_meaningless_groups_over_independent_rows_are_not_flagged():
+    df = _repeated_measures(identifiable=False)
+    shuffled_ids = np.random.default_rng(1).permutation(df["subject"].to_numpy())  # no structure at all
+    assert group_leakage(*_xy(df), shuffled_ids, repeats=3)[0] == []
+
+
+def test_overlap_without_identifiable_features_is_not_flagged():
+    df = _repeated_measures(identifiable=False)  # same subjects on both sides, but features carry no identity
+    found, info = group_leakage(*_xy(df), df["subject"], repeats=3)
+    assert found == [] and info["same_group_share"] > 0.9 and abs(info["gap"]) < 0.03
+
+
+def test_group_check_through_run_layer4_excludes_the_column_and_explains_harmless_overlap():
+    res = run_layer4(_repeated_measures(identifiable=False), "y", 1, groups="subject")
+    assert "subject" not in res.extras["single_feature"].feature.tolist()
+    assert any("no measurable inflation" in n and "share a 'subject'" in n for n in res.notes)
+
+
+def test_group_check_input_validation():
+    df = _repeated_measures()
+    X, y = _xy(df)
+    with pytest.raises(ValueError, match="not in the data"):
+        run_layer4(df, "y", 1, groups="nope")
+    with pytest.raises(ValueError, match="missing values"):
+        run_layer4(df.assign(subject=df.subject.where(df.subject != 3)), "y", 1, groups="subject")
+    with pytest.raises(ValueError, match="at least 10 distinct groups"):
+        group_leakage(X, y, df.subject % 5)
+    assert "own group" in group_leakage(X, y, np.arange(len(df)))[1]["skipped"]
+
+
+def test_moderate_gap_is_flagged_at_severity_3_not_4():
+    df = _repeated_measures(noise=1.1)  # measured gaps 0.066-0.092 over three seeds
+    found, info = group_leakage(*_xy(df), df["subject"], "subject", repeats=3)
+    assert [f.severity for f in found] == [3] and 0.03 <= info["gap"] < 0.10
+
+
+def test_same_group_share_is_the_fraction_of_test_rows_with_a_sibling_in_train():
+    # two rows per group, 75/25 split: P(sibling in train) ~ 0.75; SD of the share on 150 test rows ~ 0.035
+    rng = np.random.default_rng(0)
+    X, y = pd.DataFrame(rng.normal(size=(600, 3))), rng.integers(0, 2, 600)
+    share = group_leakage(X, y, np.repeat(np.arange(300), 2), repeats=2)[1]["same_group_share"]
+    assert 0.64 < share < 0.86
+
+
+def test_material_gap_needs_both_practical_size_and_statistical_clarity():
+    assert _material_gap(0.05, 0.01, 0.03)
+    assert not _material_gap(0.02, 0.001, 0.03)  # statistically clear but too small to matter
+    assert not _material_gap(0.05, 0.03, 0.03)  # large enough but within 3 SE of noise
+    assert not _material_gap(-0.10, 0.01, 0.03)  # grouped folds scoring HIGHER is not leakage
+
+
+def test_min_gap_parameter_is_respected():
+    df = _repeated_measures()  # measured gap ~ +0.45
+    assert group_leakage(*_xy(df), df["subject"], repeats=3, min_gap=0.6)[0] == []

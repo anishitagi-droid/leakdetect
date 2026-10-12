@@ -53,3 +53,16 @@ def test_cli_matches_positive_label_across_numeric_and_boolean_targets(tmp_path,
     )
     assert main([str(path), "--target", "y", "--positive", positive]) == 1
     assert "leak" in capsys.readouterr().out
+
+
+def test_cli_group_flag_reports_entity_leakage(tmp_path, capsys):
+    from leakdetect.__main__ import main
+
+    rng = np.random.default_rng(0)
+    subject = np.repeat(np.arange(60), 6)
+    label = rng.permutation(np.arange(60) % 2)[subject]
+    sig = rng.normal(size=(60, 5))[subject] + rng.normal(scale=0.3, size=(360, 5))
+    path = tmp_path / "g.csv"
+    pd.DataFrame(sig, columns=list("abcde")).assign(y=label, subject=subject).to_csv(path, index=False)
+    assert main([str(path), "--target", "y", "--positive", "1", "--group", "subject"]) == 1
+    assert "group-leakage" in capsys.readouterr().out

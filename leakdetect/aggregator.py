@@ -33,6 +33,7 @@ FAMILY = {
     "train-test-too-similar": "split-similarity",
     "train-test-shift": "shift",
     "post-period-feature": "post-period",
+    "group-leakage": "group",
 }
 
 

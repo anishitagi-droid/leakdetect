@@ -49,16 +49,21 @@ def main(argv=None) -> int:
     ap.add_argument("--target", required=True, help="name of the target column")
     ap.add_argument("--positive", required=True, help="the target value treated as the positive class")
     ap.add_argument("--drop", nargs="*", default=[], metavar="COL", help="columns to ignore (row ids, ...)")
+    ap.add_argument("--group", metavar="COL", help="entity id column (patient, user, ...): test for entity leakage")
     ap.add_argument("--script", help="python file with the modelling pipeline, checked statically (Layer 1)")
     ap.add_argument("--json", action="store_true", help="print the JSON report instead of markdown")
     ap.add_argument("--fail-severity", type=int, default=4, help="exit 1 at/above this severity; 0 never fails")
     args = ap.parse_args(argv)
 
     df = pd.read_csv(args.csv)
-    for col in (args.target, *args.drop):
+    for col in (args.target, *args.drop, *([args.group] if args.group else [])):
         if col not in df.columns:
             sys.exit(f"error: column {col!r} not in {args.csv} (columns: {list(df.columns)[:12]}...)")
-    results = [run_layer4(df, args.target, _resolve_positive(df, args.target, args.positive), drop_cols=args.drop)]
+    results = [
+        run_layer4(
+            df, args.target, _resolve_positive(df, args.target, args.positive), drop_cols=args.drop, groups=args.group
+        )
+    ]
     if args.script:
         results.append(analyze_file(args.script))
     report = aggregate(results)
