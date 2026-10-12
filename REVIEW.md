@@ -83,3 +83,19 @@ Running on three datasets other than AER found problems the 63-test suite and th
 Process notes: one of my own patches silently did nothing because `ruff format` had reshaped the text it expected; it was
 caught by a failing test. Patches now assert their anchor. Mutation check on the new code: 12/12 killed after
 strengthening four weak assertions (KS ties, median value, absent-row handling, CLI dtype mapping).
+
+---
+# Addendum 2 — fuzzing, drop-impact, entity leakage
+
+| # | Found by | Problem | Resolution |
+|---|---|---|---|
+| H1 | fuzzing 15 messy inputs | 4 crashed with opaque sklearn errors: infinite values, duplicate column names, a dataset of 8 rows, no usable features. | Infinities become missing (reported); the rest raise a `ValueError` that says what is wrong; fold count adapts to a small class. |
+| H2 | CLI test with float/bool targets | `--positive 1` failed on a `0.0/1.0` target and `--positive true` on a bool target. | Numbers compare numerically, booleans case-insensitively. |
+| H3 | measuring, not assuming | The headline evidence ("AUC falls from 0.995 to 0.829 without the flagged columns") lived only in demo scripts. | `drop_impact` is part of Layer 4 and appears in the report. |
+| H4 | hypothesis tested and **rejected** | I expected Orthodont / ChickWeight / VerbAgg to show entity leakage. Random-vs-grouped AUC gaps were -0.024 / +0.005 / -0.002 even though 100% of test rows share an entity with train. | The check reports both numbers and flags only a material gap; overlap alone is not a finding. |
+| H5 | false-positive control | "gap > 3 SE" alone flagged 2 of 20 meaningless group assignments (SE from few repeats is unreliable); an absolute gap >= 0.03 flagged 0 of 20. | Both criteria are required; the rule is a pure function with exact-number tests. |
+
+Process note: a mutation run reported "8/8 killed" while one of my new tests was failing on the *unmutated* code, so every
+mutant counted as killed. The result was void; after fixing the test (its bounds were too tight for a 50-row test set) the
+honest run showed 3 survivors, which exposed an untestable decision rule (now extracted) and a runner filter that
+deselected a test. Final: 9/9 killed on a green baseline. The suite is now 100 tests and takes ~85 s on one CPU.
