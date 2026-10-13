@@ -4,6 +4,8 @@
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
+**Project lead and maintainer:** [Anish Itagi](https://github.com/anishitagi-droid) · **Implementation:** Claude (Anthropic) · see [How this was built](#how-this-was-built)
+
 A data-leakage detector for tabular machine learning. Leakage makes a model look better than it is: a feature that
 secretly encodes the answer, a scaler fitted before the train/test split, an entity that appears on both sides of a
 split. `leakdetect` looks for it from four angles, and reports **evidence with severities and measured impact** instead
@@ -84,12 +86,25 @@ including two of my own mistakes. The suite takes about 85 s on one CPU because 
 * Layer 4's descriptive checks run on a median-imputed copy of the full data (a diagnostic, not an evaluation).
 
 ## How this was built
-Designed and implemented by Claude (Anthropic): the four-layer architecture, every module and method in `leakdetect/`, the
-tests and the demos. Anish set the goal and the standard: he supplied the starting brief, insisted that every claim be backed
-by an experiment on real data, asked for the code review, the extra datasets and the fuzzing that found most of the defects
-listed in `REVIEW.md`, and decided what to publish. Every number in this README was produced by running the code in this
-repo on the datasets listed in `data/README.md`. The commit history groups one build into logical steps; it is not a record
-of calendar time, and commits carry a `Co-authored-by: Claude` trailer.
+Led by Anish Itagi and implemented by Claude (Anthropic): the four-layer architecture, every module and method in
+`leakdetect/`, the tests and the demos were written by Claude. What Anish did, specifically:
+
+* **Set the problem and the standard.** He brought the problem (multi-stage pipeline leakage and feature-store leakage) and
+  the starting brief, and from the first request asked what had *actually been found*, not whether it was finished. That
+  rule is why the project has controls (shuffled labels and ids, pure noise), measured impact and a mutation-checked suite
+  instead of claimed coverage.
+* **Commissioned the three review rounds that shaped the code** (all written up in `REVIEW.md`): a line-by-line
+  senior-engineer review (8 defects, dead and wasteful code removed, Layer 3 35-75x faster); a clean-install and
+  new-dataset pass (7 defects, including a crash on missing values, 139 s -> 14 s on wide data and 42 false flags on pure
+  noise); and a fuzzing and feature round (4 crashes fixed, the drop-impact estimate and the entity-leakage check).
+* **Steered what was built and tested:** the dataset focus (AER first), validation on additional real datasets, and a
+  requirement that new features be "simple yet technical".
+* **Decided what to publish and how** (public repository, CI, packaging for interviewers and professors), and owns and
+  maintains the repository.
+
+Every number in this README was produced by running the code in this repo on the datasets listed in `data/README.md`.
+The commit history groups one build into logical steps; it is not a record of calendar time, and commits carry a
+`Co-authored-by: Claude` trailer.
 
 ## Layout
 `leakdetect/` the package (one module per layer, plus `aggregator.py` and the CLI) · `tests/` · `demo/` runnable examples

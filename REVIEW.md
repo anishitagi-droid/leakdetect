@@ -1,6 +1,6 @@
 # Code review — leakdetect (senior-engineer pass)
 
-> Engineering log written by Claude (Anthropic) during the build; "I" and "my" refer to Claude. Line numbers refer to earlier versions of the code, before each fix.
+> Engineering log written by Claude (Anthropic) during the build; "I" and "my" refer to Claude. Line numbers refer to earlier versions of the code, before each fix. Each review round was commissioned by Anish: the line-by-line review, the clean-install and new-dataset pass, and the fuzzing and feature round.
 
 Line numbers refer to the code **before** this review (snapshot kept outside the repo). Tooling used: ruff
 (F,E,B,SIM,C4,PIE,RET,ARG,UP,RUF,PERF), vulture, radon, a golden-output diff of the demo, and a hand-rolled
