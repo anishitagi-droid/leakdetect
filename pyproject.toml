@@ -1,3 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leakdetect"
+version = "0.1.0"
+description = "Data leakage detector for tabular ML: static pipeline analysis, runtime provenance, point-in-time checks and statistical checks."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+# lower bounds are the oldest versions the full test suite was run against (see .github/workflows/ci.yml)
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+    "scipy>=1.13",
+    "networkx>=3.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+leakdetect = "leakdetect.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/anishitagi-droid/leakdetect"
+
+[tool.setuptools]
+packages = ["leakdetect"]
+
 [tool.ruff]
 line-length = 120
 
