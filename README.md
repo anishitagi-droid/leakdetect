@@ -84,11 +84,12 @@ including two of my own mistakes. The suite takes about 85 s on one CPU because 
 * Layer 4's descriptive checks run on a median-imputed copy of the full data (a diagnostic, not an evaluation).
 
 ## How this was built
-Implemented, tested and reviewed in conversation with Claude (Anthropic), working from an architecture document that
-Anish supplied; Anish directed the scope and kept pushing for empirical validation over claimed results. Every number in
-this README was produced by running the code in this repo on the datasets listed in `data/README.md`. The commit history
-groups one build into logical steps; it is not a record of calendar time, and commits carry a `Co-authored-by: Claude`
-trailer.
+Designed and implemented by Claude (Anthropic): the four-layer architecture, every module and method in `leakdetect/`, the
+tests and the demos. Anish set the goal and the standard: he supplied the starting brief, insisted that every claim be backed
+by an experiment on real data, asked for the code review, the extra datasets and the fuzzing that found most of the defects
+listed in `REVIEW.md`, and decided what to publish. Every number in this README was produced by running the code in this
+repo on the datasets listed in `data/README.md`. The commit history groups one build into logical steps; it is not a record
+of calendar time, and commits carry a `Co-authored-by: Claude` trailer.
 
 ## Layout
 `leakdetect/` the package (one module per layer, plus `aggregator.py` and the CLI) · `tests/` · `demo/` runnable examples
